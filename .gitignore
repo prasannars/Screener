@@ -1,0 +1,15 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+.env
+.env.*
+
+# Frontend
+portfolio-frontend/node_modules/
+portfolio-frontend/dist/
+
+# Generated market data caches
+portfolio-backend/data/
