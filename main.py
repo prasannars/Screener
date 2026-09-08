@@ -1,6 +1,6 @@
 from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import StreamingResponse
 import os
 import tempfile
 import asyncio
@@ -25,7 +25,6 @@ import nse_universe
 
 app = FastAPI(title="PrasannaTrade Portfolio Analyzer API", version="5.0.0")
 
-# CORS middleware
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -44,7 +43,6 @@ async def analyze_cas_upload(
     password: str = Form(""),
     background_tasks: BackgroundTasks = None
 ):
-    """Analyze mutual fund CAS PDF"""
     if not file.filename.endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are allowed.")
     
@@ -55,18 +53,9 @@ async def analyze_cas_upload(
     try:
         if background_tasks:
             background_tasks.add_task(mutual_funds.schedule_warm, 160)
-            
         catalog = mutual_funds.get_funds(refresh=False).get("rows", [])
-        
-        report = cas_import.analyze_cas(
-            source=tmp_path, 
-            password=password, 
-            filename=file.filename,
-            catalog=catalog
-        )
-        
+        report = cas_import.analyze_cas(source=tmp_path, password=password, filename=file.filename, catalog=catalog)
         return {"success": True, "data": report}
-        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to analyze CAS: {str(e)}")
     finally:
@@ -75,19 +64,14 @@ async def analyze_cas_upload(
 
 @app.post("/api/analyze-stocks")
 async def analyze_stocks_upload(file: UploadFile = File(...)):
-    """Analyze stock portfolio from Excel/CSV"""
     if not file.filename.endswith(('.xlsx', '.xls', '.csv')):
         raise HTTPException(status_code=400, detail="Only Excel/CSV files are allowed.")
-    
     try:
         file_content = await file.read()
         result = stock_analyzer.analyze_stock_portfolio(file_content, file.filename)
-        
         if 'error' in result:
             raise HTTPException(status_code=400, detail=result['error'])
-        
         return {"success": True, "data": result}
-        
     except HTTPException:
         raise
     except Exception as e:
@@ -123,13 +107,11 @@ def _stock_row_from_listing(item: dict) -> dict:
         "reasons": (score_data.get("reasons") or [])[:3],
     }
 
-
 def _listed_universe() -> list[dict]:
     listed = nse_universe.load_listed_equities()
     if listed:
         return listed
-    return [{"symbol": s, "name": s, "industry": None, "series": "EQ"} for s in dict.fromkeys(screener.SCREEN_UNIVERSE)]
-
+    return [{"symbol": s, "name": s, "industry": None, "series": "EQ"} for s in dict.fromkeys(screener.STOCK_UNIVERSE)]
 
 @app.get("/api/stocks/all")
 async def get_all_stocks(
@@ -140,15 +122,11 @@ async def get_all_stocks(
     sort_by: str = Query("name", pattern="^(score|pe|roe|market_cap|name|symbol|price|sector)$"),
     sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
 ):
-    """Paginated NSE listed stocks. Fundamentals overlay cached yfinance data when available."""
     try:
         universe = _listed_universe()
         if q:
             needle = q.strip().lower()
-            universe = [
-                item for item in universe
-                if needle in item["symbol"].lower() or needle in (item.get("name") or "").lower()
-            ]
+            universe = [item for item in universe if needle in item["symbol"].lower() or needle in (item.get("name") or "").lower()]
 
         stocks_data = [_stock_row_from_listing(item) for item in universe]
         sectors = sorted({row.get("sector") for row in stocks_data if row.get("sector") and row.get("sector") != "Unknown"})
@@ -193,49 +171,10 @@ async def get_all_stocks(
             "success": True,
             "data": paginated,
             "sectors": sectors,
-            "pagination": {
-                "total": total,
-                "limit": limit,
-                "offset": offset,
-                "has_more": offset + limit < total,
-            },
+            "pagination": {"total": total, "limit": limit, "offset": offset, "has_more": offset + limit < total},
         }
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch stocks: {str(e)}")
-
-@app.get("/api/stocks/{symbol}")
-async def get_stock_details(symbol: str):
-    """Get detailed information for a specific stock"""
-    try:
-        fund = get_fundamentals(symbol)
-        if not fund:
-            raise HTTPException(status_code=404, detail="Stock not found")
-        
-        from stock_metrics import calculate_stock_score
-        score_data = calculate_stock_score(fund)
-        
-        return {
-            "success": True,
-            "data": {
-                **fund,
-                'score': score_data.get('score'),
-                'grade': score_data.get('grade'),
-                'reasons': score_data.get('reasons')
-            }
-        }
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch stock: {str(e)}")
-
-@app.get("/api/stocks/screen/recommended")
-async def get_recommended_stocks(limit: int = Query(10, ge=1, le=50)):
-    """Get top recommended stocks based on fundamental screening"""
-    try:
-        screened = screener.screen_stocks(limit=limit, min_score=60)
-        return {"success": True, "data": screened}
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to screen stocks: {str(e)}")
 
 # ==========================================
 # ALL MUTUAL FUNDS ENDPOINTS
@@ -252,24 +191,13 @@ async def get_all_mutual_funds(
     sort_by: str = Query("name", pattern="^(ai_score|ret_1y|ret_3y|nav|name|category)$"),
     sort_dir: str = Query("asc", pattern="^(asc|desc)$"),
 ):
-    """
-    Get all Indian mutual funds from AMFI catalog.
-    Returns paginated list with returns and AI scores.
-    """
     try:
         funds_data = mutual_funds.get_funds(refresh=False)
         rows = funds_data.get("rows", [])
-        
-        # Apply filters
         filtered = rows
         if q:
             needle = q.strip().lower()
-            filtered = [
-                r for r in filtered
-                if needle in (r.get("name") or "").lower()
-                or needle in (r.get("amc") or "").lower()
-                or needle in (r.get("code") or "")
-            ]
+            filtered = [r for r in filtered if needle in (r.get("name") or "").lower() or needle in (r.get("amc") or "").lower() or needle in (r.get("code") or "")]
         if category:
             filtered = [r for r in filtered if r.get('category', '').lower() == category.lower()]
         if bucket:
@@ -277,14 +205,11 @@ async def get_all_mutual_funds(
         if plan:
             filtered = [r for r in filtered if r.get('plan', '').lower() == plan.lower()]
         
-        # Sort
         reverse = sort_dir == "desc"
-
         def fund_num(row, field, missing):
             try:
                 value = row.get(field)
-                if value is None or value == "":
-                    return missing
+                if value is None or value == "": return missing
                 return float(value)
             except (TypeError, ValueError):
                 return missing
@@ -302,7 +227,6 @@ async def get_all_mutual_funds(
         else:
             filtered.sort(key=lambda x: str(x.get('name') or '').lower(), reverse=reverse)
         
-        # Paginate, then load 1Y/3Y for this page so the table is populated
         total = len(filtered)
         paginated = filtered[offset:offset + limit]
         codes = [row.get("code") for row in paginated if row.get("code")]
@@ -313,58 +237,32 @@ async def get_all_mutual_funds(
         return {
             "success": True,
             "data": paginated,
-            "pagination": {
-                "total": total,
-                "limit": limit,
-                "offset": offset,
-                "has_more": offset + limit < total
-            },
+            "pagination": {"total": total, "limit": limit, "offset": offset, "has_more": offset + limit < total},
             "as_of": funds_data.get("as_of")
         }
-        
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch mutual funds: {str(e)}")
 
 @app.get("/api/mutual-funds/categories")
 async def get_mf_categories():
-    """Get all available mutual fund categories"""
     try:
         funds_data = mutual_funds.get_funds(refresh=False)
         rows = funds_data.get("rows", [])
-        
         categories = sorted(list(set(r.get('category', '') for r in rows if r.get('category'))))
         buckets = sorted(list(set(r.get('bucket', '') for r in rows if r.get('bucket'))))
-        
-        return {
-            "success": True,
-            "data": {
-                "categories": categories,
-                "buckets": buckets
-            }
-        }
+        return {"success": True, "data": {"categories": categories, "buckets": buckets}}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch categories: {str(e)}")
 
-@app.get("/api/mutual-funds/{code}")
-async def get_mf_details(code: str):
-    """Get detailed information for a specific mutual fund"""
-    try:
-        funds_data = mutual_funds.get_funds(refresh=False)
-        rows = funds_data.get("rows", [])
-        
-        fund = next((r for r in rows if r.get('code') == code), None)
-        if not fund:
-            raise HTTPException(status_code=404, detail="Mutual fund not found")
-        
-        return {"success": True, "data": fund}
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Failed to fetch fund: {str(e)}")
+# ==========================================
+# RECOMMENDATIONS & AI ENDPOINTS
+# ==========================================
 
 @app.get("/api/recommendations/stocks")
 def get_grouped_stocks():
-    return {"success": True, "data": screener_engine.get_grouped_stock_recommendations()}
+    payload = screener_engine.get_pro_themed_stock_recommendations()
+    meta = payload.pop("_meta", {}) if isinstance(payload, dict) else {}
+    return {"success": True, "data": payload, **meta}
 
 @app.get("/api/recommendations/mutual-funds")
 def get_grouped_mfs():
@@ -391,8 +289,11 @@ def run_backtest(symbols: str = Query("RELIANCE,TCS,HDFCBANK"), strategy: str = 
     symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
     return {"success": True, "data": backtester.backtest_strategy(symbol_list, strategy, years)}
 
+# ==========================================
+# LIVE MARKET ENDPOINTS
+# ==========================================
+
 def _last_price(symbol: str) -> tuple[str, Optional[float]]:
-    """yfinance FastInfo.get('last_price') returns None; use keyed access instead."""
     try:
         info = yf.Ticker(f"{symbol}.NS").fast_info
         try:
@@ -407,8 +308,7 @@ def _last_price(symbol: str) -> tuple[str, Optional[float]]:
 
 def fetch_live_quotes(symbols: list[str]) -> dict:
     quotes = {}
-    if not symbols:
-        return quotes
+    if not symbols: return quotes
     workers = min(16, len(symbols))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         futures = [pool.submit(_last_price, symbol) for symbol in symbols]
@@ -424,19 +324,11 @@ def get_live_quotes(symbols: str = Query("RELIANCE,TCS,HDFCBANK,INFY,ITC")):
     return {"success": True, "data": fetch_live_quotes(symbol_list)}
 
 @app.get("/api/live/market")
-def get_live_market(
-    limit: int = Query(80, ge=1, le=200),
-    offset: int = Query(0, ge=0),
-    q: Optional[str] = None,
-):
-    """Paginated NSE universe with cached last prices for the Live Market board."""
+def get_live_market(limit: int = Query(80, ge=1, le=200), offset: int = Query(0, ge=0), q: Optional[str] = None):
     universe = _listed_universe()
     if q:
         needle = q.strip().lower()
-        universe = [
-            item for item in universe
-            if needle in item["symbol"].lower() or needle in (item.get("name") or "").lower()
-        ]
+        universe = [item for item in universe if needle in item["symbol"].lower() or needle in (item.get("name") or "").lower()]
     universe.sort(key=lambda item: str(item.get("symbol") or ""))
     total = len(universe)
     page = universe[offset:offset + limit]
@@ -454,12 +346,7 @@ def get_live_market(
     return {
         "success": True,
         "data": rows,
-        "pagination": {
-            "total": total,
-            "limit": limit,
-            "offset": offset,
-            "has_more": offset + limit < total,
-        },
+        "pagination": {"total": total, "limit": limit, "offset": offset, "has_more": offset + limit < total},
     }
 
 async def live_stock_data_generator(symbols: list[str]):
@@ -477,11 +364,7 @@ async def stream_live_stocks(symbols: str = Query("RELIANCE,TCS,HDFCBANK,INFY,IT
     return StreamingResponse(
         live_stock_data_generator(symbol_list),
         media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"},
     )
 
 @app.get("/api/health")

@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import {
   TrendingUp, Brain, Activity, BarChart3, RefreshCw, Search,
   Filter, PieChart, CheckCircle, AlertCircle, Upload, ChevronUp, ChevronDown,
+  Wallet, FileText
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 
@@ -53,7 +54,9 @@ function App() {
   const [groupedMFs, setGroupedMFs] = useState({});
   const [groupedLoading, setGroupedLoading] = useState(false);
   const [picksQuery, setPicksQuery] = useState('');
+  const [picksMeta, setPicksMeta] = useState({ universe: 0, with_fundamentals: 0 });
   const [aiInsights, setAiInsights] = useState({});
+  
   const [backtestSymbols, setBacktestSymbols] = useState('RELIANCE,TCS,HDFCBANK');
   const [backtestResults, setBacktestResults] = useState(null);
   const [isBacktesting, setIsBacktesting] = useState(false);
@@ -75,7 +78,13 @@ function App() {
       fetch(`${API}/api/recommendations/stocks`).then((r) => r.json()).catch(() => ({})),
       fetch(`${API}/api/recommendations/mutual-funds`).then((r) => r.json()).catch(() => ({})),
     ]).then(([stocks, funds]) => {
-      setGroupedStocks(stocks.data || {});
+      const stockData = { ...(stocks.data || {}) };
+      delete stockData._meta;
+      setGroupedStocks(stockData);
+      setPicksMeta({
+        universe: stocks.universe || 0,
+        with_fundamentals: stocks.with_fundamentals || 0,
+      });
       setGroupedMFs(funds.data || {});
     }).finally(() => setGroupedLoading(false));
   }, [activeTab]);
@@ -131,9 +140,7 @@ function App() {
       const response = await fetch(`${API}/api/mutual-funds/categories`);
       const result = await response.json();
       if (result.success) setMfCategories(result.data);
-    } catch {
-      /* keep previous filters */
-    }
+    } catch { /* keep previous filters */ }
   };
 
   const handleMFUpload = async (event) => {
@@ -259,7 +266,6 @@ function App() {
               />
             </TabPanel>
           )}
-
           {activeTab === 'stocks' && (
             <TabPanel k="stocks">
               <AllStocksTab
@@ -285,7 +291,6 @@ function App() {
               />
             </TabPanel>
           )}
-
           {activeTab === 'funds' && (
             <TabPanel k="funds">
               <AllFundsTab
@@ -313,7 +318,6 @@ function App() {
               />
             </TabPanel>
           )}
-
           {activeTab === 'grouped' && (
             <TabPanel k="grouped">
               <GroupedPicksTab
@@ -322,18 +326,17 @@ function App() {
                 groupedLoading={groupedLoading}
                 picksQuery={picksQuery}
                 setPicksQuery={setPicksQuery}
+                picksMeta={picksMeta}
                 aiInsights={aiInsights}
                 fetchAiInsight={fetchAiInsight}
               />
             </TabPanel>
           )}
-
           {activeTab === 'live' && (
             <TabPanel k="live">
               <LiveMarketTab />
             </TabPanel>
           )}
-
           {activeTab === 'backtest' && (
             <TabPanel k="backtest">
               <BacktestTab
@@ -351,15 +354,11 @@ function App() {
   );
 }
 
+// --- Sub-Components ---
+
 function TabPanel({ children, k }) {
   return (
-    <motion.div
-      key={k}
-      initial={{ opacity: 0, y: 10 }}
-      animate={{ opacity: 1, y: 0 }}
-      exit={{ opacity: 0, y: -10 }}
-      transition={{ duration: 0.2 }}
-    >
+    <motion.div key={k} initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }} transition={{ duration: 0.2 }}>
       {children}
     </motion.div>
   );
@@ -402,46 +401,206 @@ function PortfolioTab({ portfolioSubTab, setPortfolioSubTab, mfReport, stockRepo
 
       {portfolioSubTab === 'upload' && (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <label className="bg-white border border-slate-200 rounded-2xl p-8 text-center hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer">
-            <div className="mx-auto w-12 h-12 rounded-xl bg-indigo-50 flex items-center justify-center mb-4">
-              <TrendingUp className="text-indigo-600 w-6 h-6" />
+          <label className="bg-white border border-slate-200 rounded-2xl p-8 text-center hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer group">
+            <div className="mx-auto w-14 h-14 rounded-xl bg-indigo-50 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+              <FileText className="text-indigo-600 w-7 h-7" />
             </div>
             <p className="text-lg font-semibold text-slate-900">Mutual Fund CAS PDF</p>
             <p className="text-sm text-slate-500 mt-1 mb-4">CAMS, KFintech, NSDL, or CDSL</p>
-            <span className="inline-flex px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl">
+            <span className="inline-flex px-5 py-2.5 bg-indigo-600 text-white text-sm font-semibold rounded-xl group-hover:bg-indigo-700 transition-colors">
               {isAnalyzing ? 'Analyzing...' : 'Choose PDF'}
             </span>
             <input type="file" accept=".pdf" className="hidden" onChange={handleMFUpload} disabled={isAnalyzing} />
           </label>
-          <label className="bg-white border border-slate-200 rounded-2xl p-8 text-center hover:shadow-md hover:border-indigo-200 transition-all cursor-pointer">
-            <div className="mx-auto w-12 h-12 rounded-xl bg-emerald-50 flex items-center justify-center mb-4">
-              <BarChart3 className="text-emerald-600 w-6 h-6" />
+          <label className="bg-white border border-slate-200 rounded-2xl p-8 text-center hover:shadow-md hover:border-emerald-200 transition-all cursor-pointer group">
+            <div className="mx-auto w-14 h-14 rounded-xl bg-emerald-50 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
+              <BarChart3 className="text-emerald-600 w-7 h-7" />
             </div>
             <p className="text-lg font-semibold text-slate-900">Stock Portfolio Excel/CSV</p>
             <p className="text-sm text-slate-500 mt-1 mb-4">Columns: Symbol, Quantity, Buy Price, Buy Date</p>
-            <span className="inline-flex px-5 py-2.5 bg-emerald-600 text-white text-sm font-semibold rounded-xl">
+            <span className="inline-flex px-5 py-2.5 bg-emerald-600 text-white text-sm font-semibold rounded-xl group-hover:bg-emerald-700 transition-colors">
               {isAnalyzing ? 'Analyzing...' : 'Choose Excel/CSV'}
             </span>
             <input type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleStockUpload} disabled={isAnalyzing} />
           </label>
         </div>
       )}
+      
       {error && (
-        <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded-xl flex gap-3 items-start">
+        <div className="mt-6 p-4 bg-red-50 border border-red-200 rounded-xl flex gap-3 items-start">
           <AlertCircle className="text-red-600 w-5 h-5 flex-shrink-0 mt-0.5" />
           <p className="text-sm text-red-800">{error}</p>
         </div>
       )}
+      
       {portfolioSubTab === 'mf' && mfReport && <MFDashboard report={mfReport} />}
       {portfolioSubTab === 'stocks' && stockReport && <StockDashboard report={stockReport} />}
     </div>
   );
 }
 
-function AllStocksTab({
-  allStocks, stocksLoading, stocksError, stocksPagination, stocksSortBy, stocksSortDir,
-  onSortStocks, stocksSector, setStocksSector, stocksSectors, stocksQuery, setStocksQuery, fetchAllStocks,
-}) {
+function MFDashboard({ report }) {
+  const summary = report.summary || {};
+  const holdings = report.holdings || [];
+  const actions = report.verdict?.actions || [];
+  const taxHarvest = report.tax_harvest || [];
+  const isPositive = (summary.gain || 0) >= 0;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <SummaryCard title="Invested" value={summary.invested} subtitle={`${summary.funds || holdings.length} schemes`} />
+        <SummaryCard title="Current Value" value={summary.value} subtitle={`XIRR: ${summary.xirr ?? 'N/A'}%`} />
+        <div className={cn('p-6 rounded-2xl border shadow-sm', isPositive ? 'bg-emerald-50 border-emerald-100' : 'bg-red-50 border-red-100')}>
+          <p className="text-sm font-medium text-slate-600 mb-2">Total Returns</p>
+          <p className={cn('text-3xl font-bold', isPositive ? 'text-emerald-700' : 'text-red-700')}>₹{(summary.gain || 0).toLocaleString('en-IN')}</p>
+          <p className="text-sm font-semibold mt-1">{isPositive ? '+' : ''}{summary.ret_pct}%</p>
+        </div>
+      </div>
+
+      {taxHarvest.length > 0 && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-indigo-100 rounded-lg"><Wallet className="w-5 h-5 text-indigo-600" /></div>
+            <div>
+              <h3 className="text-lg font-bold text-indigo-900">Tax Loss Harvesting Opportunity</h3>
+              <p className="text-sm text-indigo-700">Book losses to reduce your tax liability this financial year.</p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {taxHarvest.slice(0, 3).map((item, idx) => (
+              <div key={idx} className="bg-white p-3 rounded-lg border border-indigo-100 flex justify-between items-center">
+                <div>
+                  <p className="font-semibold text-gray-900 text-sm">{item.name}</p>
+                  <p className="text-xs text-gray-500">{item.tax_type} Loss</p>
+                </div>
+                <div className="text-right">
+                  <p className="font-bold text-red-600">-₹{item.loss.toLocaleString('en-IN')}</p>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {actions.length > 0 && (
+        <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-3">
+          <h3 className="font-semibold text-slate-900 flex items-center gap-2"><Brain className="w-4 h-4 text-purple-600" /> AI Insights</h3>
+          {actions.slice(0, 4).map((a, i) => (
+            <p key={i} className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-xl p-3 flex gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> {a}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <div className="bg-white p-6 rounded-2xl border border-slate-200">
+        <h3 className="font-semibold text-slate-900 mb-4">Top Holdings</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {holdings.slice(0, 6).map((h, i) => {
+            const hPos = (h.gain || 0) >= 0;
+            return (
+              <div key={i} className="p-4 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
+                <div className="flex justify-between items-start mb-2">
+                  <p className="font-semibold text-sm text-slate-900">{h.name}</p>
+                  <span className={cn('text-xs font-bold px-2 py-1 rounded-md', hPos ? 'bg-emerald-100 text-emerald-700' : 'bg-red-100 text-red-700')}>
+                    {hPos ? '+' : ''}{h.ret_pct}%
+                  </span>
+                </div>
+                <div className="flex justify-between text-sm mt-2">
+                  <span className="text-slate-500">Invested: ₹{(h.invested || 0).toLocaleString('en-IN')}</span>
+                  <span className="font-medium text-slate-900">Current: ₹{(h.value || 0).toLocaleString('en-IN')}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function StockDashboard({ report }) {
+  const summary = report.summary || {};
+  const holdings = report.holdings || [];
+  const alerts = report.recommendations?.alerts || [];
+  const taxHarvest = report.tax_harvest || [];
+  const isPositive = (summary.total_gain || 0) >= 0;
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        <SummaryCard title="Invested" value={summary.total_invested} subtitle={`${summary.total_stocks || holdings.length} stocks`} />
+        <SummaryCard title="Current Value" value={summary.total_value} subtitle={`${isPositive ? '+' : ''}${summary.overall_return_pct}%`} />
+        <div className={cn('p-6 rounded-2xl border', isPositive ? 'bg-emerald-50 border-emerald-100' : 'bg-red-50 border-red-100')}>
+          <p className="text-sm font-medium text-slate-600 mb-2">Total Gain</p>
+          <p className={cn('text-3xl font-bold', isPositive ? 'text-emerald-700' : 'text-red-700')}>₹{(summary.total_gain || 0).toLocaleString('en-IN')}</p>
+        </div>
+      </div>
+
+      {taxHarvest.length > 0 && (
+        <div className="bg-indigo-50 border border-indigo-200 rounded-2xl p-6">
+          <div className="flex items-center gap-3 mb-4">
+            <div className="p-2 bg-indigo-100 rounded-lg"><Wallet className="w-5 h-5 text-indigo-600" /></div>
+            <div>
+              <h3 className="text-lg font-bold text-indigo-900">Tax Loss Harvesting</h3>
+              <p className="text-sm text-indigo-700">Book these stock losses to offset your capital gains tax.</p>
+            </div>
+          </div>
+          <div className="space-y-2">
+            {taxHarvest.slice(0, 3).map((item, idx) => (
+              <div key={idx} className="bg-white p-3 rounded-lg border border-indigo-100 flex justify-between items-center">
+                <div>
+                  <p className="font-semibold text-gray-900 text-sm">{item.symbol}</p>
+                  <p className="text-xs text-gray-500">{item.tax_type} Loss</p>
+                </div>
+                <p className="font-bold text-red-600">-₹{item.loss.toLocaleString('en-IN')}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {alerts.length > 0 && (
+        <div className="space-y-2">
+          {alerts.map((a, i) => (
+            <p key={i} className="text-sm text-red-800 bg-red-50 border border-red-100 rounded-xl p-3 flex gap-2">
+              <AlertCircle className="w-4 h-4 flex-shrink-0 mt-0.5" /> {a.message}
+            </p>
+          ))}
+        </div>
+      )}
+
+      <div className="bg-white p-6 rounded-2xl border border-slate-200">
+        <h3 className="font-semibold text-slate-900 mb-4">Your Stock Holdings</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {holdings.map((h) => {
+            const isPos = (h.gain || 0) >= 0;
+            return (
+              <div key={h.symbol} className="p-4 rounded-xl border border-slate-100 bg-slate-50/50 hover:bg-slate-50 transition-colors">
+                <div className="flex justify-between items-start mb-2">
+                  <div>
+                    <p className="font-semibold text-slate-900">{h.symbol}</p>
+                    <p className="text-xs text-slate-500">{h.sector} • Score: {h.fundamental_score || 'N/A'}/100</p>
+                  </div>
+                  <span className={cn('text-sm font-bold', isPos ? 'text-emerald-700' : 'text-red-700')}>
+                    {isPos ? '+' : ''}{h.return_pct ?? h.ret_pct}%
+                  </span>
+                </div>
+                <div className="flex justify-between mt-3 pt-3 border-t border-slate-100 text-sm text-slate-600">
+                  <span>Invested: ₹{(h.invested || 0).toLocaleString('en-IN')}</span>
+                  <span className="font-medium text-slate-900">Current: ₹{(h.current_value || h.value || 0).toLocaleString('en-IN')}</span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function AllStocksTab({ allStocks, stocksLoading, stocksError, stocksPagination, stocksSortBy, stocksSortDir, onSortStocks, stocksSector, setStocksSector, stocksSectors, stocksQuery, setStocksQuery, fetchAllStocks }) {
   const sectors = stocksSectors?.length ? stocksSectors : ['Technology', 'Financial Services', 'Healthcare', 'Energy', 'Consumer Cyclical'];
   return (
     <div>
@@ -515,10 +674,7 @@ function AllStocksTab({
   );
 }
 
-function AllFundsTab({
-  allFunds, fundsLoading, fundsError, fundsPagination, fundsSortBy, fundsSortDir, onSortFunds,
-  fundsCategory, setFundsCategory, fundsBucket, setFundsBucket, fundsQuery, setFundsQuery, mfCategories, fetchAllFunds,
-}) {
+function AllFundsTab({ allFunds, fundsLoading, fundsError, fundsPagination, fundsSortBy, fundsSortDir, onSortFunds, fundsCategory, setFundsCategory, fundsBucket, setFundsBucket, fundsQuery, setFundsQuery, mfCategories, fetchAllFunds }) {
   return (
     <div>
       <SectionTitle icon={PieChart} color="text-indigo-600" title="All Mutual Funds" subtitle="AMFI catalog with 1Y/3Y returns and AI scores" />
@@ -596,19 +752,26 @@ function AllFundsTab({
   );
 }
 
-function GroupedPicksTab({ groupedMFs, groupedStocks, groupedLoading, picksQuery, setPicksQuery, aiInsights, fetchAiInsight }) {
+function GroupedPicksTab({ groupedMFs, groupedStocks, groupedLoading, picksQuery, setPicksQuery, picksMeta, aiInsights, fetchAiInsight }) {
   const q = picksQuery.trim().toLowerCase();
   const filterFunds = (funds) => (Array.isArray(funds) ? funds : []).filter((f) => !q || (f.name || '').toLowerCase().includes(q));
-  const filterStocks = (stocks) => (Array.isArray(stocks) ? stocks : []).filter((s) => !q || (s.symbol || '').toLowerCase().includes(q) || (s.sector || '').toLowerCase().includes(q));
+  const filterStocks = (stocks) => (Array.isArray(stocks) ? stocks : []).filter((s) => !q || (s.symbol || '').toLowerCase().includes(q));
+  const fundEntries = Object.entries(groupedMFs).filter(([, funds]) => Array.isArray(funds));
+  const stockEntries = Object.entries(groupedStocks).filter(([key, stocks]) => key !== '_meta' && Array.isArray(stocks));
 
   return (
     <div className="space-y-8">
-      <SectionTitle icon={TrendingUp} color="text-indigo-600" title="Smart Picks" subtitle="Grouped recommendations from the screener" />
+      <SectionTitle icon={TrendingUp} color="text-indigo-600" title="Pro Investment Themes" subtitle="Curated screens inspired by proven strategies (Magic Formula, Piotroski, etc.)" />
+      {picksMeta?.universe > 0 && (
+        <p className="text-sm text-slate-500 -mt-4">
+          Screened {picksMeta.with_fundamentals.toLocaleString('en-IN')} listed stocks with fundamentals, out of {picksMeta.universe.toLocaleString('en-IN')} NSE names. Top 12 per theme.
+        </p>
+      )} 
       <div className="relative max-w-md">
         <Search className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 w-5 h-5" />
         <input
           type="text"
-          placeholder="Search funds or stocks..."
+          placeholder="Search funds, stocks, or themes..."
           value={picksQuery}
           onChange={(e) => setPicksQuery(e.target.value)}
           className="w-full pl-10 pr-4 py-3 bg-white border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none shadow-sm"
@@ -620,32 +783,41 @@ function GroupedPicksTab({ groupedMFs, groupedStocks, groupedLoading, picksQuery
           <PieChart className="text-purple-600 w-5 h-5" />
           <h3 className="text-xl font-bold text-slate-900">Top Mutual Funds by Category</h3>
         </div>
-        {groupedLoading ? <SkeletonGrid count={3} /> : (
+        {groupedLoading ? <SkeletonGrid count={3} /> : fundEntries.length === 0 ? (
+          <EmptyState text="No Direct Growth funds with 1Y returns in the catalog yet. Open All Funds once to warm the AMFI cache, then return here." />
+        ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {Object.entries(groupedMFs).map(([category, funds]) => (
+            {fundEntries.map(([category, funds]) => (
               <motion.div key={category} whileHover={{ y: -4 }} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                 <div className="flex justify-between items-center mb-4">
                   <h4 className="font-bold text-lg text-slate-800">{category}</h4>
                   <span className="text-xs font-semibold bg-purple-50 text-purple-700 px-2.5 py-1 rounded-full border border-purple-100">Direct • Growth</span>
                 </div>
                 <div className="space-y-3">
-                  {filterFunds(funds).map((fund, idx) => (
+                  {filterFunds(funds).length === 0 ? (
+                    <p className="text-xs text-slate-500">No funds in this sleeve yet.</p>
+                  ) : filterFunds(funds).map((fund, idx) => (
                     <div key={idx} className="p-3 bg-slate-50 rounded-xl border border-slate-100">
                       <div className="flex justify-between items-start mb-2 gap-2">
                         <p className="font-semibold text-sm text-slate-900 leading-tight">{fund.name}</p>
                         <span className="text-xs font-bold text-emerald-600 bg-emerald-50 px-2 py-1 rounded-md">{fund.ai_score}</span>
                       </div>
-                      <div className="flex gap-4 text-xs text-slate-600 mb-3">
+                      <div className="flex gap-3 text-xs text-slate-600 mb-3">
                         <span>1Y: <b className="text-slate-900">{fund.ret_1y}%</b></span>
-                        {fund.ret_3y && <span>3Y: <b className="text-slate-900">{fund.ret_3y}%</b></span>}
+                        <span>3Y: <b className="text-slate-900">{fund.ret_3y}%</b></span>
+                        {fund.ret_5y && <span>5Y: <b className="text-slate-900">{fund.ret_5y}%</b></span>}
                       </div>
-                      <button onClick={() => fetchAiInsight('mf', fund.code)} className="w-full flex items-center justify-center gap-2 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 py-2 rounded-lg">
+                      <button onClick={() => fetchAiInsight('mf', fund.code)} className="w-full flex items-center justify-center gap-2 text-xs font-medium text-indigo-600 bg-indigo-50 hover:bg-indigo-100 py-2 rounded-lg transition-colors">
                         {aiInsights[fund.code] === 'loading' ? <span className="animate-pulse">AI is thinking...</span> : aiInsights[fund.code] ? <CheckCircle className="w-3 h-3" /> : <Brain className="w-3 h-3" />}
                         {aiInsights[fund.code] && aiInsights[fund.code] !== 'loading' ? 'Insight Generated' : 'Ask AI Why'}
                       </button>
-                      {aiInsights[fund.code] && aiInsights[fund.code] !== 'loading' && (
-                        <p className="mt-3 text-xs text-slate-700 italic bg-white p-3 rounded-lg border border-indigo-100">"{aiInsights[fund.code]}"</p>
-                      )}
+                      <AnimatePresence>
+                        {aiInsights[fund.code] && aiInsights[fund.code] !== 'loading' && (
+                          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden">
+                            <p className="mt-3 text-xs text-slate-700 italic bg-white p-3 rounded-lg border border-indigo-100 leading-relaxed">"{aiInsights[fund.code]}"</p>
+                          </motion.div>
+                        )}
+                      </AnimatePresence>
                     </div>
                   ))}
                 </div>
@@ -658,29 +830,39 @@ function GroupedPicksTab({ groupedMFs, groupedStocks, groupedLoading, picksQuery
       <section>
         <div className="flex items-center gap-2 mb-4">
           <BarChart3 className="text-blue-600 w-5 h-5" />
-          <h3 className="text-xl font-bold text-slate-900">Stock Strategies</h3>
+          <h3 className="text-xl font-bold text-slate-900">Screener-Style Stock Themes</h3>
         </div>
-        {groupedLoading ? <SkeletonGrid count={3} /> : (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            {Object.entries(groupedStocks).map(([strategy, stocks]) => (
-              <motion.div key={strategy} whileHover={{ y: -4 }} className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
-                <h4 className="font-bold text-lg text-blue-700 mb-4">{strategy}</h4>
-                <div className="space-y-3">
-                  {filterStocks(stocks).map((stock, idx) => (
-                    <div key={idx} className="flex justify-between items-center p-3 bg-slate-50 rounded-xl">
-                      <div>
-                        <p className="font-bold text-slate-900">{stock.symbol}</p>
-                        <p className="text-xs text-slate-500">{stock.sector} • Score: {stock.score}</p>
+        {groupedLoading ? <SkeletonGrid count={4} /> : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+            {stockEntries.map(([theme, stocks]) => {
+              const isRedFlag = theme.includes("Red Flags");
+              return (
+                <motion.div key={theme} whileHover={{ y: -4 }} className={cn("bg-white p-5 rounded-2xl border shadow-sm", isRedFlag ? "border-red-200 bg-red-50/30" : "border-slate-200")}>
+                  <h4 className={cn("font-bold text-lg mb-4 flex items-center gap-2", isRedFlag ? "text-red-700" : "text-blue-700")}>
+                    {isRedFlag && <AlertCircle className="w-5 h-5" />}
+                    {theme}
+                  </h4>
+                  <div className="space-y-3">
+                    {filterStocks(stocks).map((stock, idx) => (
+                      <div key={idx} className="flex flex-col sm:flex-row sm:justify-between sm:items-center p-3 bg-white rounded-xl border border-slate-100 hover:border-blue-200 transition-colors gap-2">
+                        <div>
+                          <div className="flex items-center gap-2">
+                            <p className="font-bold text-slate-900">{stock.symbol}</p>
+                            <span className="text-[10px] font-semibold bg-slate-100 text-slate-600 px-1.5 py-0.5 rounded">{stock.sector}</span>
+                          </div>
+                          <p className="text-xs text-blue-600 mt-1 font-medium">{stock.theme_reason}</p>
+                        </div>
+                        <div className="text-right sm:text-left">
+                          <p className="font-semibold text-slate-900">₹{stock.price != null ? Number(stock.price).toLocaleString('en-IN') : '—'}</p>
+                          <p className="text-xs text-slate-500">Score: {stock.score} • P/E: {stock.pe ?? '—'}</p>
+                        </div>
                       </div>
-                      <div className="text-right">
-                        <p className="font-semibold">₹{stock.price != null ? Number(stock.price).toLocaleString('en-IN') : '—'}</p>
-                        <p className="text-xs text-slate-500">P/E: {stock.pe ?? '—'}</p>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </motion.div>
-            ))}
+                    ))}
+                    {filterStocks(stocks).length === 0 && <p className="text-sm text-slate-500 text-center py-4">No matches in this theme.</p>}
+                  </div>
+                </motion.div>
+              );
+            })}
           </div>
         )}
       </section>
@@ -690,22 +872,23 @@ function GroupedPicksTab({ groupedMFs, groupedStocks, groupedLoading, picksQuery
 
 function LiveMarketTab() {
   const [rows, setRows] = useState([]);
+  const [livePrices, setLivePrices] = useState({});
   const [query, setQuery] = useState('');
   const [appliedQuery, setAppliedQuery] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [pagination, setPagination] = useState({ total: 0, has_more: false });
-  const [livePrices, setLivePrices] = useState({});
 
-  const loadPage = async (offset = 0, q = appliedQuery) => {
+  const loadPage = async (offset, searchQ = '') => {
     setLoading(true);
     setError('');
     try {
-      const params = new URLSearchParams({ limit: '80', offset: String(offset) });
-      if (q.trim()) params.set('q', q.trim());
-      const res = await fetch(`${API}/api/live/market?${params}`);
+      let url = `${API}/api/live/market?limit=80&offset=${offset}`;
+      if (searchQ) url += `&q=${encodeURIComponent(searchQ)}`;
+      const res = await fetch(url);
       const body = await res.json();
       if (!res.ok || !body.success) throw new Error(body.detail || 'Failed to load live market');
+      
       if (offset === 0) {
         setRows(body.data || []);
         setLivePrices({});
@@ -735,10 +918,10 @@ function LiveMarketTab() {
       try {
         const res = await fetch(`${API}/api/live/quotes?symbols=${encodeURIComponent(chunk.join(','))}`);
         const body = await res.json();
-        if (!stopped && body.data) setLivePrices((prev) => ({ ...prev, ...body.data }));
-      } catch {
-        /* keep cached prices */
-      }
+        if (!stopped && body.success && body.data) {
+          setLivePrices((prev) => ({ ...prev, ...body.data }));
+        }
+      } catch { /* keep cached prices */ }
     };
     tick();
     const id = setInterval(tick, 3000);
@@ -750,7 +933,8 @@ function LiveMarketTab() {
       <div className="flex items-center gap-3 mb-6">
         <div className="relative">
           <Activity className="text-red-500 w-6 h-6" />
-          <span className="absolute top-0 right-0 w-2 h-2 bg-red-500 rounded-full animate-ping" />
+          <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-red-500 rounded-full animate-ping" />
+          <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-red-500 rounded-full" />
         </div>
         <div>
           <h2 className="text-2xl font-bold text-slate-900">Live Market</h2>
@@ -786,16 +970,16 @@ function LiveMarketTab() {
               const live = livePrices[row.symbol];
               const price = live ?? row.price;
               return (
-                <div key={row.symbol} className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm">
+                <motion.div key={row.symbol} layout className="bg-white p-4 rounded-2xl border border-slate-200 shadow-sm hover:shadow-md transition-shadow">
                   <div className="flex items-start justify-between gap-2">
                     <p className="font-bold text-slate-900">{row.symbol}</p>
-                    {live != null && <span className="w-2 h-2 mt-1 rounded-full bg-red-500 animate-pulse" />}
+                    {live != null && <span className="w-2 h-2 mt-1.5 rounded-full bg-red-500 animate-pulse" />}
                   </div>
                   <p className="text-xs text-slate-500 truncate mt-0.5" title={row.name}>{row.name}</p>
                   <p className="text-xl font-bold text-slate-900 mt-3">
                     {price != null ? `₹${Number(price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
                   </p>
-                </div>
+                </motion.div>
               );
             })}
           </div>
@@ -855,76 +1039,7 @@ function BacktestTab({ backtestSymbols, setBacktestSymbols, runBacktest, isBackt
   );
 }
 
-function MFDashboard({ report }) {
-  const summary = report.summary || {};
-  const holdings = report.holdings || [];
-  const actions = report.verdict?.actions || [];
-  const isPositive = (summary.gain || 0) >= 0;
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <SummaryCard title="Invested" value={summary.invested} subtitle={`${summary.funds || holdings.length} schemes`} />
-        <SummaryCard title="Current Value" value={summary.value} subtitle={`XIRR: ${summary.xirr ?? 'N/A'}%`} />
-        <div className={cn('p-6 rounded-2xl border shadow-sm', isPositive ? 'bg-emerald-50 border-emerald-100' : 'bg-red-50 border-red-100')}>
-          <p className="text-sm font-medium text-slate-600 mb-2">Total Returns</p>
-          <p className={cn('text-3xl font-bold', isPositive ? 'text-emerald-700' : 'text-red-700')}>₹{(summary.gain || 0).toLocaleString('en-IN')}</p>
-          <p className="text-sm font-semibold mt-1">{isPositive ? '+' : ''}{summary.ret_pct}%</p>
-        </div>
-      </div>
-      {actions.length > 0 && (
-        <div className="bg-white p-6 rounded-2xl border border-slate-200 space-y-3">
-          <h3 className="font-semibold text-slate-900">Insights</h3>
-          {actions.slice(0, 4).map((a, i) => <p key={i} className="text-sm text-amber-800 bg-amber-50 border border-amber-100 rounded-xl p-3">{a}</p>)}
-        </div>
-      )}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {holdings.slice(0, 8).map((h, i) => (
-          <div key={i} className="p-4 rounded-2xl border border-slate-200 bg-white">
-            <p className="font-semibold text-sm text-slate-900">{h.name}</p>
-            <div className="flex justify-between mt-2 text-sm">
-              <span className="text-slate-500">₹{(h.invested || 0).toLocaleString('en-IN')}</span>
-              <span className="font-medium">₹{(h.value || 0).toLocaleString('en-IN')}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function StockDashboard({ report }) {
-  const summary = report.summary || {};
-  const holdings = report.holdings || [];
-  const alerts = report.recommendations?.alerts || [];
-  const isPositive = (summary.total_gain || 0) >= 0;
-  return (
-    <div className="space-y-6">
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        <SummaryCard title="Invested" value={summary.total_invested} subtitle={`${summary.total_stocks || holdings.length} stocks`} />
-        <SummaryCard title="Current Value" value={summary.total_value} subtitle={`${isPositive ? '+' : ''}${summary.overall_return_pct}%`} />
-        <div className={cn('p-6 rounded-2xl border', isPositive ? 'bg-emerald-50 border-emerald-100' : 'bg-red-50 border-red-100')}>
-          <p className="text-sm font-medium text-slate-600 mb-2">Total Gain</p>
-          <p className={cn('text-3xl font-bold', isPositive ? 'text-emerald-700' : 'text-red-700')}>₹{(summary.total_gain || 0).toLocaleString('en-IN')}</p>
-        </div>
-      </div>
-      {alerts.map((a, i) => <p key={i} className="text-sm text-red-800 bg-red-50 border border-red-100 rounded-xl p-3">{a.message}</p>)}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        {holdings.map((h) => (
-          <div key={h.symbol} className="p-4 rounded-2xl border border-slate-200 bg-white">
-            <div className="flex justify-between">
-              <p className="font-semibold text-slate-900">{h.symbol}</p>
-              <span className={cn('text-sm font-bold', (h.gain || 0) >= 0 ? 'text-emerald-700' : 'text-red-700')}>{(h.gain || 0) >= 0 ? '+' : ''}{h.return_pct ?? h.ret_pct}%</span>
-            </div>
-            <div className="flex justify-between mt-2 text-sm text-slate-600">
-              <span>₹{(h.invested || 0).toLocaleString('en-IN')}</span>
-              <span>₹{(h.current_value || h.value || 0).toLocaleString('en-IN')}</span>
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
+// --- Utility Components ---
 
 function SortableTh({ label, sortKey, current, dir, onSort }) {
   const active = current === sortKey;
@@ -949,7 +1064,7 @@ function DataTable({ children }) {
 function LoadMore({ onClick, loading, remaining }) {
   return (
     <div className="text-center mt-6">
-      <button type="button" onClick={onClick} disabled={loading} className="px-4 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 rounded-xl disabled:opacity-50">
+      <button type="button" onClick={onClick} disabled={loading} className="px-4 py-2 text-sm font-medium text-indigo-700 bg-indigo-50 rounded-xl hover:bg-indigo-100 disabled:opacity-50 transition-colors">
         {loading ? 'Loading...' : `Load more (${Number(remaining || 0).toLocaleString('en-IN')} remaining)`}
       </button>
     </div>

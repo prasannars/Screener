@@ -12,18 +12,18 @@ def generate_stock_insight(symbol: str, fundamentals: dict) -> str:
     sector = fundamentals.get('sector', 'N/A')
     
     prompt = f"""You are an expert Indian equity research analyst. 
-    Analyze this stock: {symbol}
-    Fundamentals: P/E: {pe}, ROE: {roe}%, Debt/Equity: {debt}%, Sector: {sector}
+    Analyze this stock: {symbol} ({sector})
+    Fundamentals: P/E: {pe}, ROE: {roe}%, Debt/Equity: {debt}%
     Provide a concise, 2-sentence recommendation. 
-    Sentence 1: Why it's a good/bad pick based on these numbers.
-    Sentence 2: One key risk to watch.
+    Sentence 1: Why this specific fundamental mix makes it a strong/weak pick.
+    Sentence 2: One key risk to watch (e.g., sector headwinds, valuation).
     Keep it under 50 words. Do not use markdown."""
     
     try:
         response = ollama.chat(model='qwen2.5:7b', messages=[{'role': 'user', 'content': prompt}])
         return response['message']['content'].strip()
     except Exception as e:
-        return f"AI insight unavailable (Ensure Ollama is running): {str(e)}"
+        return f"AI insight unavailable. Ensure Ollama is running."
 
 def generate_mf_insight(fund_name: str, category: str, ret_1y: float, ret_3y: float, ai_score: float) -> str:
     """Generate AI insight for a mutual fund."""
