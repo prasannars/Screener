@@ -1,8 +1,8 @@
 import { useState, useEffect } from 'react';
-import { TrendingUp, Briefcase, Upload, BarChart3, PieChart, ChevronUp, ChevronDown } from 'lucide-react';
+import { TrendingUp, Briefcase, Upload, BarChart3, PieChart, ChevronUp, ChevronDown, Brain, Activity, RefreshCw } from 'lucide-react';
 
 function App() {
-  const [mainTab, setMainTab] = useState('portfolio'); // 'portfolio', 'stocks', 'funds'
+  const [mainTab, setMainTab] = useState('portfolio');
   const [portfolioSubTab, setPortfolioSubTab] = useState('upload'); // 'upload', 'mf', 'stocks'
   
   // Portfolio data
@@ -34,6 +34,13 @@ function App() {
   const [fundsQuery, setFundsQuery] = useState('');
   const [fundsError, setFundsError] = useState('');
 
+  const [groupedStocks, setGroupedStocks] = useState({});
+  const [groupedMFs, setGroupedMFs] = useState({});
+  const [backtestSymbols, setBacktestSymbols] = useState('RELIANCE,TCS,HDFCBANK');
+  const [backtestResults, setBacktestResults] = useState(null);
+  const [isBacktesting, setIsBacktesting] = useState(false);
+  const [aiInsights, setAiInsights] = useState({});
+
   // Fetch catalogs when a tab is first opened (filters apply on the button)
   useEffect(() => {
     if (mainTab === 'stocks') fetchAllStocks(0);
@@ -44,6 +51,18 @@ function App() {
       fetchAllFunds(0);
       fetchMfCategories();
     }
+  }, [mainTab]);
+
+  useEffect(() => {
+    if (mainTab !== 'grouped') return;
+    fetch('http://localhost:8000/api/recommendations/stocks')
+      .then((res) => res.json())
+      .then((data) => setGroupedStocks(data.data || {}))
+      .catch(() => setGroupedStocks({}));
+    fetch('http://localhost:8000/api/recommendations/mutual-funds')
+      .then((res) => res.json())
+      .then((data) => setGroupedMFs(data.data || {}))
+      .catch(() => setGroupedMFs({}));
   }, [mainTab]);
 
   const fetchAllStocks = async (offset = 0, overrides = {}) => {
@@ -190,47 +209,106 @@ function App() {
     }
   };
 
+  const fetchAiInsight = async (type, identifier) => {
+    if (aiInsights[identifier]) return;
+    setAiInsights((prev) => ({ ...prev, [identifier]: 'Thinking...' }));
+    const endpoint = type === 'stock'
+      ? `http://localhost:8000/api/ai/stock-insight/${identifier}`
+      : `http://localhost:8000/api/ai/mf-insight/${identifier}`;
+    try {
+      const res = await fetch(endpoint);
+      const data = await res.json();
+      setAiInsights((prev) => ({ ...prev, [identifier]: data.insight }));
+    } catch (err) {
+      setAiInsights((prev) => ({ ...prev, [identifier]: 'Failed. Is Ollama running?' }));
+    }
+  };
+
+  const runBacktest = async () => {
+    setIsBacktesting(true);
+    try {
+      const res = await fetch(`http://localhost:8000/api/backtest?symbols=${encodeURIComponent(backtestSymbols)}&years=3`);
+      const data = await res.json();
+      setBacktestResults(data.data);
+    } finally {
+      setIsBacktesting(false);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-50">
       {/* Main Navigation */}
       <nav className="bg-white border-b border-gray-200 sticky top-0 z-50">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex justify-between h-16">
+          <div className="flex flex-col lg:flex-row lg:justify-between lg:items-center min-h-16 py-2 gap-2">
             <div className="flex items-center">
               <h1 className="text-xl font-bold text-gray-900">PrasannaTrade</h1>
             </div>
-            <div className="flex space-x-1">
+            <div className="flex flex-wrap items-center justify-end gap-1 py-2">
               <button
                 onClick={() => setMainTab('portfolio')}
-                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                   mainTab === 'portfolio' ? 'bg-blue-600 text-white' : 'text-gray-700 hover:bg-gray-100'
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <PieChart size={18} />
+                  <PieChart size={16} />
                   My Portfolio
                 </div>
               </button>
               <button
                 onClick={() => setMainTab('stocks')}
-                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                   mainTab === 'stocks' ? 'bg-green-600 text-white' : 'text-gray-700 hover:bg-gray-100'
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <BarChart3 size={18} />
+                  <BarChart3 size={16} />
                   All Stocks India
                 </div>
               </button>
               <button
                 onClick={() => setMainTab('funds')}
-                className={`px-4 py-2 rounded-lg font-medium transition-colors ${
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
                   mainTab === 'funds' ? 'bg-purple-600 text-white' : 'text-gray-700 hover:bg-gray-100'
                 }`}
               >
                 <div className="flex items-center gap-2">
-                  <TrendingUp size={18} />
+                  <TrendingUp size={16} />
                   All Mutual Funds
+                </div>
+              </button>
+              <button
+                onClick={() => setMainTab('grouped')}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  mainTab === 'grouped' ? 'bg-indigo-600 text-white' : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Brain size={16} />
+                  Grouped Picks
+                </div>
+              </button>
+              <button
+                onClick={() => setMainTab('live')}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  mainTab === 'live' ? 'bg-red-600 text-white' : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <Activity size={16} />
+                  Live Market
+                </div>
+              </button>
+              <button
+                onClick={() => setMainTab('backtest')}
+                className={`px-3 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  mainTab === 'backtest' ? 'bg-orange-600 text-white' : 'text-gray-700 hover:bg-gray-100'
+                }`}
+              >
+                <div className="flex items-center gap-2">
+                  <RefreshCw size={16} />
+                  Backtesting
                 </div>
               </button>
             </div>
@@ -300,6 +378,27 @@ function App() {
             setFundsQuery={setFundsQuery}
             mfCategories={mfCategories}
             fetchAllFunds={fetchAllFunds}
+          />
+        )}
+
+        {mainTab === 'grouped' && (
+          <GroupedPicksTab
+            groupedMFs={groupedMFs}
+            groupedStocks={groupedStocks}
+            aiInsights={aiInsights}
+            fetchAiInsight={fetchAiInsight}
+          />
+        )}
+
+        {mainTab === 'live' && <LiveMarketTab />}
+
+        {mainTab === 'backtest' && (
+          <BacktestTab
+            backtestSymbols={backtestSymbols}
+            setBacktestSymbols={setBacktestSymbols}
+            runBacktest={runBacktest}
+            isBacktesting={isBacktesting}
+            backtestResults={backtestResults}
           />
         )}
       </div>
@@ -727,6 +826,248 @@ function SummaryCard({ title, value, subtitle }) {
       <p className="text-sm font-medium text-gray-500 mb-2">{title}</p>
       <p className="text-2xl font-bold text-gray-900">₹{(value || 0).toLocaleString('en-IN')}</p>
       <p className="text-xs text-gray-400 mt-1">{subtitle}</p>
+    </div>
+  );
+}
+
+function GroupedPicksTab({ groupedMFs, groupedStocks, aiInsights, fetchAiInsight }) {
+  return (
+    <div className="space-y-8">
+      <section>
+        <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2"><TrendingUp className="text-green-600" /> Top Mutual Funds by SEBI Category</h2>
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+          {Object.entries(groupedMFs).map(([category, funds]) => (
+            <div key={category} className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+              <h3 className="font-bold text-lg text-purple-700 mb-3">{category}</h3>
+              <div className="space-y-3">
+                {(Array.isArray(funds) ? funds : []).map((fund, idx) => (
+                  <div key={idx} className="p-3 bg-gray-50 rounded-lg">
+                    <div className="flex justify-between items-start">
+                      <p className="font-semibold text-sm text-gray-900">{fund.name}</p>
+                      <span className="text-xs font-bold bg-purple-100 text-purple-700 px-2 py-1 rounded">Score: {fund.ai_score}</span>
+                    </div>
+                    <div className="flex gap-3 mt-2 text-xs text-gray-600">
+                      <span>1Y: <b className="text-green-600">{fund.ret_1y}%</b></span>
+                      {fund.ret_3y && <span>3Y: <b className="text-green-600">{fund.ret_3y}%</b></span>}
+                    </div>
+                    <button onClick={() => fetchAiInsight('mf', fund.code)} className="mt-2 text-xs flex items-center gap-1 text-purple-600 hover:underline"><Brain size={12} /> Ask AI Why</button>
+                    {aiInsights[fund.code] && <p className="mt-2 text-xs text-gray-700 italic bg-purple-50 p-2 rounded border border-purple-100">"{aiInsights[fund.code]}"</p>}
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+      <section>
+        <h2 className="text-2xl font-bold text-gray-900 mb-4 flex items-center gap-2"><BarChart3 className="text-blue-600" /> Stock Strategies</h2>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {Object.entries(groupedStocks).map(([strategy, stocks]) => (
+            <div key={strategy} className="bg-white p-5 rounded-xl border border-gray-200 shadow-sm">
+              <h3 className="font-bold text-lg text-blue-700 mb-3">{strategy}</h3>
+              <div className="space-y-2">
+                {(Array.isArray(stocks) ? stocks : []).map((stock, idx) => (
+                  <div key={idx} className="flex justify-between items-center p-2 hover:bg-gray-50 rounded">
+                    <div>
+                      <p className="font-bold text-gray-900">{stock.symbol}</p>
+                      <p className="text-xs text-gray-500">{stock.sector} • Score: {stock.score}</p>
+                    </div>
+                    <div className="text-right">
+                      <p className="font-semibold">₹{stock.price}</p>
+                      <p className="text-xs text-gray-500">P/E: {stock.pe}</p>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function LiveMarketTab() {
+  const [rows, setRows] = useState([]);
+  const [query, setQuery] = useState('');
+  const [appliedQuery, setAppliedQuery] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [pagination, setPagination] = useState({ total: 0, has_more: false });
+  const [livePrices, setLivePrices] = useState({});
+
+  const loadPage = async (offset = 0, q = appliedQuery) => {
+    setLoading(true);
+    setError('');
+    try {
+      const params = new URLSearchParams({ limit: '80', offset: String(offset) });
+      if (q.trim()) params.set('q', q.trim());
+      const res = await fetch(`http://localhost:8000/api/live/market?${params}`);
+      const body = await res.json();
+      if (!res.ok || !body.success) {
+        throw new Error(body.detail || 'Failed to load live market');
+      }
+      if (offset === 0) {
+        setRows(body.data || []);
+        setLivePrices({});
+      } else {
+        setRows((prev) => [...prev, ...(body.data || [])]);
+      }
+      setPagination(body.pagination || { total: 0, has_more: false });
+    } catch (err) {
+      setError(err.message || 'Failed to load live market');
+      if (offset === 0) setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    loadPage(0, '');
+  }, []);
+
+  useEffect(() => {
+    if (!rows.length) return;
+    let stopped = false;
+    let cursor = 0;
+    const tick = async () => {
+      const symbols = rows.map((row) => row.symbol).filter(Boolean);
+      if (!symbols.length) return;
+      const chunk = symbols.slice(cursor, cursor + 25);
+      cursor = (cursor + 25) % symbols.length;
+      try {
+        const res = await fetch(`http://localhost:8000/api/live/quotes?symbols=${encodeURIComponent(chunk.join(','))}`);
+        const body = await res.json();
+        if (!stopped && body.data) {
+          setLivePrices((prev) => ({ ...prev, ...body.data }));
+        }
+      } catch {
+        /* keep cached prices */
+      }
+    };
+    tick();
+    const id = setInterval(tick, 3000);
+    return () => {
+      stopped = true;
+      clearInterval(id);
+    };
+  }, [rows]);
+
+  const applySearch = () => {
+    setAppliedQuery(query);
+    loadPage(0, query);
+  };
+
+  return (
+    <div>
+      <div className="flex flex-wrap items-center gap-2 mb-6">
+        <Activity className="text-red-500 animate-pulse" />
+        <h2 className="text-2xl font-bold text-gray-900">Live Market</h2>
+        <span className="text-xs bg-red-100 text-red-700 px-2 py-1 rounded-full">NSE live quotes</span>
+      </div>
+
+      <div className="bg-white p-4 rounded-xl border border-gray-200 mb-6">
+        <div className="flex flex-col md:flex-row gap-3">
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === 'Enter') applySearch(); }}
+            placeholder="Search symbol or company"
+            className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-red-500"
+          />
+          <button type="button" onClick={applySearch} className="px-5 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium">
+            Search
+          </button>
+        </div>
+        <p className="text-sm text-gray-600 mt-3">
+          Showing {rows.length.toLocaleString('en-IN')} of {(pagination.total || 0).toLocaleString('en-IN')} listed stocks
+        </p>
+      </div>
+
+      {error && <p className="text-sm text-red-600 mb-4">{error}</p>}
+
+      {loading && rows.length === 0 ? (
+        <p className="text-center text-gray-500 py-12">Loading NSE stocks...</p>
+      ) : rows.length === 0 ? (
+        <p className="text-center text-gray-500 py-12">No stocks match that search.</p>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-5 gap-4">
+            {rows.map((row) => {
+              const live = livePrices[row.symbol];
+              const price = live ?? row.price;
+              return (
+                <div key={row.symbol} className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
+                  <div className="flex items-start justify-between gap-2">
+                    <p className="font-bold text-gray-900">{row.symbol}</p>
+                    {live != null && <span className="w-2 h-2 mt-1 rounded-full bg-red-500 animate-pulse" />}
+                  </div>
+                  <p className="text-xs text-gray-500 truncate mt-0.5" title={row.name}>{row.name}</p>
+                  <p className="text-xl font-bold text-gray-900 mt-3">
+                    {price != null ? `₹${Number(price).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                  </p>
+                </div>
+              );
+            })}
+          </div>
+          {pagination.has_more && (
+            <div className="text-center mt-6">
+              <button
+                type="button"
+                onClick={() => loadPage(rows.length, appliedQuery)}
+                disabled={loading}
+                className="px-4 py-2 text-sm font-medium text-red-700 bg-red-50 rounded-lg disabled:opacity-50"
+              >
+                {loading ? 'Loading...' : `Load more (${(pagination.total - rows.length).toLocaleString('en-IN')} remaining)`}
+              </button>
+            </div>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function BacktestTab({ backtestSymbols, setBacktestSymbols, runBacktest, isBacktesting, backtestResults }) {
+  return (
+    <div className="max-w-4xl mx-auto">
+      <h2 className="text-2xl font-bold text-gray-900 mb-6 flex items-center gap-2"><RefreshCw className="text-orange-600" /> Strategy Backtester</h2>
+      <div className="bg-white p-6 rounded-xl border border-gray-200 shadow-sm mb-6">
+        <label className="block text-sm font-medium text-gray-700 mb-2">Comma-separated Stock Symbols</label>
+        <div className="flex gap-4">
+          <input type="text" value={backtestSymbols} onChange={(e) => setBacktestSymbols(e.target.value)} className="flex-1 px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-purple-500" placeholder="RELIANCE,TCS,HDFCBANK" />
+          <button onClick={runBacktest} disabled={isBacktesting} className="px-6 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 font-medium">
+            {isBacktesting ? 'Running...' : 'Run Backtest (3Y SMA)'}
+          </button>
+        </div>
+      </div>
+      {backtestResults && (
+        <div className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden">
+          <table className="w-full text-left">
+            <thead className="bg-gray-50 border-b border-gray-200">
+              <tr>
+                <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase">Symbol</th>
+                <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase">Total Return</th>
+                <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase">Sharpe Ratio</th>
+                <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase">Max Drawdown</th>
+                <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase">Win Rate</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-gray-200">
+              {(backtestResults.results || []).map((res, idx) => (
+                <tr key={idx} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 font-semibold text-gray-900">{res.symbol}</td>
+                  <td className={`px-6 py-4 font-bold ${res.total_return_pct >= 0 ? 'text-green-600' : 'text-red-600'}`}>{res.total_return_pct}%</td>
+                  <td className="px-6 py-4 text-gray-700">{res.sharpe_ratio}</td>
+                  <td className="px-6 py-4 text-red-600">{res.max_drawdown_pct}%</td>
+                  <td className="px-6 py-4 text-gray-700">{res.win_rate_pct}%</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

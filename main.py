@@ -1,9 +1,13 @@
-from fastapi import FastAPI, UploadFile, File, HTTPException, BackgroundTasks, Query
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, BackgroundTasks, Query
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 import os
 import tempfile
+import asyncio
+import json
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Optional
+import yfinance as yf
 
 # Import existing modules
 import cas_import
@@ -13,15 +17,18 @@ import mutual_funds
 # Import stock modules
 import stock_analyzer
 import screener
+import screener_engine
+import backtester
+from ai_recommender import generate_stock_insight, generate_mf_insight
 from stock_metrics import get_fundamentals, get_cached_fundamentals, calculate_stock_score, enrich_symbols, schedule_universe_warm, _to_float
 import nse_universe
 
-app = FastAPI(title="PrasannaTrade Portfolio Analyzer API", version="4.0.0")
+app = FastAPI(title="PrasannaTrade Portfolio Analyzer API", version="5.0.0")
 
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -34,7 +41,7 @@ app.add_middleware(
 @app.post("/api/analyze-cas")
 async def analyze_cas_upload(
     file: UploadFile = File(...),
-    password: str = "YOUR_PAN_HERE",
+    password: str = Form(""),
     background_tasks: BackgroundTasks = None
 ):
     """Analyze mutual fund CAS PDF"""
@@ -355,6 +362,128 @@ async def get_mf_details(code: str):
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to fetch fund: {str(e)}")
 
+@app.get("/api/recommendations/stocks")
+def get_grouped_stocks():
+    return {"success": True, "data": screener_engine.get_grouped_stock_recommendations()}
+
+@app.get("/api/recommendations/mutual-funds")
+def get_grouped_mfs():
+    return {"success": True, "data": screener_engine.get_grouped_mf_recommendations()}
+
+@app.get("/api/ai/stock-insight/{symbol}")
+def get_ai_stock_insight(symbol: str):
+    fund = get_fundamentals(symbol)
+    if not fund:
+        return {"success": False, "error": "Stock not found"}
+    return {"success": True, "symbol": symbol, "insight": generate_stock_insight(symbol, fund)}
+
+@app.get("/api/ai/mf-insight/{code}")
+def get_ai_mf_insight(code: str):
+    funds_data = mutual_funds.get_funds(refresh=False)
+    fund = next((r for r in funds_data.get("rows", []) if r.get("code") == code), None)
+    if not fund:
+        return {"success": False, "error": "Fund not found"}
+    insight = generate_mf_insight(fund.get("name"), fund.get("category"), fund.get("ret_1y", 0), fund.get("ret_3y", 0), fund.get("ai_score", 0.5))
+    return {"success": True, "name": fund.get("name"), "insight": insight}
+
+@app.get("/api/backtest")
+def run_backtest(symbols: str = Query("RELIANCE,TCS,HDFCBANK"), strategy: str = "SMA_Crossover", years: int = 3):
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    return {"success": True, "data": backtester.backtest_strategy(symbol_list, strategy, years)}
+
+def _last_price(symbol: str) -> tuple[str, Optional[float]]:
+    """yfinance FastInfo.get('last_price') returns None; use keyed access instead."""
+    try:
+        info = yf.Ticker(f"{symbol}.NS").fast_info
+        try:
+            price = info["last_price"]
+        except Exception:
+            price = getattr(info, "last_price", None)
+        if price is not None:
+            return symbol, round(float(price), 2)
+    except Exception:
+        pass
+    return symbol, None
+
+def fetch_live_quotes(symbols: list[str]) -> dict:
+    quotes = {}
+    if not symbols:
+        return quotes
+    workers = min(16, len(symbols))
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(_last_price, symbol) for symbol in symbols]
+        for fut in as_completed(futures):
+            symbol, price = fut.result()
+            if price is not None:
+                quotes[symbol] = price
+    return quotes
+
+@app.get("/api/live/quotes")
+def get_live_quotes(symbols: str = Query("RELIANCE,TCS,HDFCBANK,INFY,ITC")):
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()][:40]
+    return {"success": True, "data": fetch_live_quotes(symbol_list)}
+
+@app.get("/api/live/market")
+def get_live_market(
+    limit: int = Query(80, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    q: Optional[str] = None,
+):
+    """Paginated NSE universe with cached last prices for the Live Market board."""
+    universe = _listed_universe()
+    if q:
+        needle = q.strip().lower()
+        universe = [
+            item for item in universe
+            if needle in item["symbol"].lower() or needle in (item.get("name") or "").lower()
+        ]
+    universe.sort(key=lambda item: str(item.get("symbol") or ""))
+    total = len(universe)
+    page = universe[offset:offset + limit]
+    rows = []
+    for item in page:
+        symbol = item["symbol"]
+        cached = get_cached_fundamentals(symbol) or {}
+        price = _to_float(cached.get("current_price"))
+        rows.append({
+            "symbol": symbol,
+            "name": cached.get("name") or item.get("name") or symbol,
+            "price": round(price, 2) if price is not None else None,
+            "sector": cached.get("sector") or item.get("industry"),
+        })
+    return {
+        "success": True,
+        "data": rows,
+        "pagination": {
+            "total": total,
+            "limit": limit,
+            "offset": offset,
+            "has_more": offset + limit < total,
+        },
+    }
+
+async def live_stock_data_generator(symbols: list[str]):
+    while True:
+        try:
+            data = await asyncio.to_thread(fetch_live_quotes, symbols)
+            yield f"data: {json.dumps(data)}\n\n"
+        except Exception as e:
+            yield f"data: {json.dumps({'error': str(e)})}\n\n"
+        await asyncio.sleep(2)
+
+@app.get("/api/live/stocks")
+async def stream_live_stocks(symbols: str = Query("RELIANCE,TCS,HDFCBANK,INFY,ITC")):
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()]
+    return StreamingResponse(
+        live_stock_data_generator(symbol_list),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "message": "PrasannaTrade Analyzer v4.0 is running"}
+    return {"status": "ok", "message": "PrasannaTrade Analyzer v5.0 is running"}
