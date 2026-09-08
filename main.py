@@ -320,7 +320,7 @@ def fetch_live_quotes(symbols: list[str]) -> dict:
 
 @app.get("/api/live/quotes")
 def get_live_quotes(symbols: str = Query("RELIANCE,TCS,HDFCBANK,INFY,ITC")):
-    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()][:40]
+    symbol_list = [s.strip().upper() for s in symbols.split(",") if s.strip()][:60]
     return {"success": True, "data": fetch_live_quotes(symbol_list)}
 
 @app.get("/api/live/market")
@@ -329,7 +329,14 @@ def get_live_market(limit: int = Query(80, ge=1, le=200), offset: int = Query(0,
     if q:
         needle = q.strip().lower()
         universe = [item for item in universe if needle in item["symbol"].lower() or needle in (item.get("name") or "").lower()]
-    universe.sort(key=lambda item: str(item.get("symbol") or ""))
+        universe.sort(key=lambda item: str(item.get("symbol") or ""))
+    else:
+        core_order = {symbol: idx for idx, symbol in enumerate(screener_engine.CORE_SYMBOLS)}
+        core_rows = [item for item in universe if item.get("symbol") in core_order]
+        rest = [item for item in universe if item.get("symbol") not in core_order]
+        core_rows.sort(key=lambda item: core_order.get(item.get("symbol"), 999))
+        rest.sort(key=lambda item: str(item.get("symbol") or ""))
+        universe = core_rows + rest
     total = len(universe)
     page = universe[offset:offset + limit]
     rows = []
@@ -370,3 +377,85 @@ async def stream_live_stocks(symbols: str = Query("RELIANCE,TCS,HDFCBANK,INFY,IT
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "message": "PrasannaTrade Analyzer v5.0 is running"}
+# ==========================================
+# STOCK DETAIL & COMPARISON ENDPOINTS
+# ==========================================
+
+@app.get("/api/stocks/{symbol}/details")
+async def get_stock_details_enhanced(symbol: str):
+    """Comprehensive stock details with peers"""
+    try:
+        fund = get_fundamentals(symbol)
+        if not fund:
+            raise HTTPException(status_code=404, detail="Stock not found")
+        score_data = calculate_stock_score(fund)
+        sector = fund.get('sector', '')
+        universe = _listed_universe()
+        peers = [_stock_row_from_listing(item) for item in universe if (item.get("industry") or "").lower() == (sector or "").lower() and item["symbol"] != symbol][:5]
+        return {
+            "success": True,
+            "data": {
+                "basic": {"symbol": symbol, "name": fund.get('name'), "sector": fund.get('sector'), "industry": fund.get('industry'), "current_price": fund.get('current_price'), "market_cap": fund.get('market_cap')},
+                "fundamentals": {"pe_ratio": fund.get('pe_ratio'), "pb_ratio": fund.get('pb_ratio'), "roe": fund.get('roe'), "roce": fund.get('roce'), "debt_to_equity": fund.get('debt_to_equity'), "current_ratio": fund.get('current_ratio'), "profit_margin": fund.get('profit_margin'), "revenue_growth": fund.get('revenue_growth'), "dividend_yield": fund.get('dividend_yield')},
+                "valuation": {"52w_high": fund.get('52w_high'), "52w_low": fund.get('52w_low'), "avg_volume": fund.get('avg_volume')},
+                "score": {"fundamental_score": score_data.get('score'), "grade": score_data.get('grade'), "reasons": score_data.get('reasons', [])},
+                "peers": peers,
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/api/mutual-funds/{code}/details")
+async def get_mf_details_enhanced(code: str):
+    """Comprehensive MF details with risk metrics"""
+    try:
+        funds_data = mutual_funds.get_funds(refresh=False)
+        rows = funds_data.get("rows", [])
+        fund = next((r for r in rows if r.get('code') == code), None)
+        if not fund:
+            raise HTTPException(status_code=404, detail="Fund not found")
+        mutual_funds.get_returns([code])
+        mutual_funds.merge_cached_returns([fund])
+        return {
+            "success": True,
+            "data": {
+                "basic": {"name": fund.get('name'), "amc": fund.get('amc'), "category": fund.get('category'), "bucket": fund.get('bucket'), "plan": fund.get('plan'), "option": fund.get('option'), "nav": fund.get('nav'), "nav_date": fund.get('nav_date')},
+                "returns": {"ret_1m": fund.get('ret_1m'), "ret_3m": fund.get('ret_3m'), "ret_6m": fund.get('ret_6m'), "ret_1y": fund.get('ret_1y'), "ret_3y": fund.get('ret_3y'), "ret_5y": fund.get('ret_5y')},
+                "risk_metrics": {"vol_1y": fund.get('vol_1y'), "max_dd_1y": fund.get('max_dd_1y'), "sharpe_1y": fund.get('sharpe_1y'), "beta": fund.get('beta'), "alpha": fund.get('alpha')},
+                "ai_score": fund.get('ai_score'),
+                "quality": fund.get('quality'),
+            }
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/api/mutual-funds/compare")
+async def compare_mutual_funds(codes: list[str]):
+    """Compare 2-4 mutual funds side by side"""
+    try:
+        if len(codes) < 2 or len(codes) > 4:
+            raise HTTPException(status_code=400, detail="Compare 2-4 funds")
+        funds_data = mutual_funds.get_funds(refresh=False)
+        rows = funds_data.get("rows", [])
+        comparison = []
+        for code in codes:
+            fund = next((r for r in rows if r.get('code') == code), None)
+            if fund:
+                mutual_funds.get_returns([code])
+                mutual_funds.merge_cached_returns([fund])
+                comparison.append({
+                    "code": code, "name": fund.get('name'), "amc": fund.get('amc'),
+                    "category": fund.get('category'), "nav": fund.get('nav'),
+                    "ret_1y": fund.get('ret_1y'), "ret_3y": fund.get('ret_3y'), "ret_5y": fund.get('ret_5y'),
+                    "vol_1y": fund.get('vol_1y'), "sharpe_1y": fund.get('sharpe_1y'),
+                    "max_dd_1y": fund.get('max_dd_1y'), "ai_score": fund.get('ai_score'),
+                })
+        return {"success": True, "data": comparison}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
