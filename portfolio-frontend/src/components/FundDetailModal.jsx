@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { X, ArrowLeft, Brain, TrendingUp, Shield, Info } from 'lucide-react';
 import { cn, Badge, MetricRow, fmtPct } from './ui';
 
-const API = 'http://localhost:8000';
+import { cn, Badge, MetricRow, fmtPct } from './ui';
+import { API } from '../api';
 
 export default function FundDetailModal({ code, onClose }) {
   const [details, setDetails] = useState(null);

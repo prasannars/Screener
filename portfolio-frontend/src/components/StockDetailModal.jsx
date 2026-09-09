@@ -2,7 +2,8 @@ import { useState, useEffect } from 'react';
 import { X, ArrowLeft, TrendingUp, TrendingDown, Brain, Star } from 'lucide-react';
 import { cn, Badge, MetricRow } from './ui';
 
-const API = 'http://localhost:8000';
+import { cn, Badge, MetricRow } from './ui';
+import { API } from '../api';
 
 export default function StockDetailModal({ symbol, onClose }) {
   const [details, setDetails] = useState(null);

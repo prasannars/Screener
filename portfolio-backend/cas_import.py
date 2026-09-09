@@ -176,7 +176,7 @@ def _is_demat_cas(cas_data) -> bool:
 
 
 def _demat_to_rows(cas_data) -> tuple[list[dict], int]:
-    """Flatten NSDL/CDSL mutual funds, equities, bonds, and NPS into analyzer rows."""
+    """Flatten NSDL/CDSL mutual fund schemes only (equities/bonds/NPS are ignored)."""
     rows: list[dict] = []
     skipped = 0
     for account in _attr(cas_data, "accounts") or []:
@@ -193,7 +193,14 @@ def _demat_to_rows(cas_data) -> tuple[list[dict], int]:
             if units in (None, 0) and value in (None, 0):
                 skipped += 1
                 continue
-            cost = _amount(_attr(mf, "total_cost"))
+            cost = (
+                _amount(_attr(mf, "total_cost"))
+                or _amount(_attr(mf, "cost"))
+                or _amount(_attr(mf, "acquisition_cost"))
+            )
+            avg_nav = _amount(_attr(mf, "avg_nav") or _attr(mf, "average_nav") or _attr(mf, "purchase_nav"))
+            if not cost and avg_nav and units:
+                cost = round(avg_nav * units, 2)
             row = {
                 "Scheme Name": _attr(mf, "name") or _attr(mf, "isin") or "Mutual Fund",
                 "AMC": amc,
@@ -208,60 +215,61 @@ def _demat_to_rows(cas_data) -> tuple[list[dict], int]:
                 row["Invested Amount"] = cost
             rows.append(row)
 
-        for eq in _attr(account, "equities") or []:
-            units = _amount(_attr(eq, "num_shares"))
-            value = _amount(_attr(eq, "value"))
-            if units in (None, 0) and value in (None, 0):
-                skipped += 1
-                continue
-            rows.append({
-                "Scheme Name": _attr(eq, "name") or _attr(eq, "symbol") or _attr(eq, "isin") or "Equity",
-                "AMC": "Equity",
-                "ISIN": _attr(eq, "isin"),
-                "Folio": folio,
-                "Units": units,
-                "Current NAV": _amount(_attr(eq, "price")),
-                "Current Value": value,
-                "Mode": "Lump sum",
-            })
-
-        for bond in _attr(account, "bonds") or []:
-            units = _amount(_attr(bond, "num_bonds"))
-            value = _amount(_attr(bond, "value"))
-            if units in (None, 0) and value in (None, 0):
-                skipped += 1
-                continue
-            rows.append({
-                "Scheme Name": _attr(bond, "name") or _attr(bond, "isin") or "Bond",
-                "AMC": "Bond",
-                "ISIN": _attr(bond, "isin"),
-                "Folio": folio,
-                "Units": units,
-                "Current NAV": _amount(_attr(bond, "market_price") or _attr(bond, "face_value")),
-                "Current Value": value,
-                "Mode": "Lump sum",
-            })
-
-    nps = _attr(cas_data, "nps")
-    if nps:
-        for scheme in _attr(nps, "schemes") or []:
-            units = _amount(_attr(scheme, "units"))
-            value = _amount(_attr(scheme, "value"))
-            if units in (None, 0) and value in (None, 0):
-                skipped += 1
-                continue
-            rows.append({
-                "Scheme Name": _attr(scheme, "scheme") or "NPS Scheme",
-                "AMC": _attr(scheme, "fund_manager") or "NPS",
-                "ISIN": None,
-                "Folio": _attr(nps, "pran") or "NPS",
-                "Units": units,
-                "Current NAV": _amount(_attr(scheme, "nav")),
-                "Current Value": value,
-                "Mode": "Lump sum",
-            })
+        skipped += len(_attr(account, "equities") or [])
+        skipped += len(_attr(account, "bonds") or [])
 
     return rows, skipped
+
+
+def _nse_lookup() -> tuple[dict[str, str], dict[str, str], set[str]]:
+    try:
+        import nse_universe
+        listed = nse_universe.load_listed_equities()
+    except Exception:
+        return {}, {}, set()
+    by_isin = {str(item.get("isin") or "").upper(): item["symbol"] for item in listed if item.get("isin")}
+    by_name = {str(item.get("name") or "").upper(): item["symbol"] for item in listed if item.get("name")}
+    symbols = {item["symbol"] for item in listed}
+    return by_isin, by_name, symbols
+
+
+def extract_cas_equities(cas_data) -> list[dict]:
+    """Pull listed-equity holdings from an NSDL/CDSL CAS. Mutual funds are ignored."""
+    by_isin, by_name, nse_symbols = _nse_lookup()
+    holdings: list[dict] = []
+    for account in _attr(cas_data, "accounts") or []:
+        for eq in _attr(account, "equities") or []:
+            units = _amount(_attr(eq, "num_shares") or _attr(eq, "quantity") or _attr(eq, "balance"))
+            value = _amount(_attr(eq, "value"))
+            if units in (None, 0) and value in (None, 0):
+                continue
+            raw_symbol = re.sub(
+                r"\.(NS|BO|NSE|BSE)$",
+                "",
+                str(_attr(eq, "symbol") or "").strip().upper(),
+            )
+            isin = str(_attr(eq, "isin") or "").upper()
+            name = str(_attr(eq, "name") or "").strip()
+            if isin.startswith("INF"):
+                continue
+            symbol = raw_symbol if raw_symbol in nse_symbols else None
+            symbol = symbol or by_isin.get(isin) or by_name.get(name.upper()) or raw_symbol
+            if not symbol:
+                continue
+            price = _amount(_attr(eq, "price") or _attr(eq, "close") or _attr(eq, "market_price"))
+            cost = _amount(_attr(eq, "total_cost") or _attr(eq, "cost"))
+            buy_price = round(cost / units, 4) if cost and units else (price or 0)
+            holdings.append({
+                "symbol": symbol,
+                "name": name or symbol,
+                "quantity": units or 0,
+                "buy_price": buy_price or 0,
+                "current_price": price or 0,
+                "buy_date": None,
+                "invested": cost or round((buy_price or 0) * (units or 0), 2),
+                "current_value": value or 0,
+            })
+    return holdings
 
 
 def _rta_to_rows(cas_data) -> tuple[list[dict], int]:
@@ -288,7 +296,10 @@ def cas_to_dataframe(cas_data) -> pd.DataFrame:
     if skipped:
         log.info(f"Skipped {skipped} zero-balance holding(s) (fully redeemed).")
     if not rows:
-        raise ValueError("CAS parsed but contained no holdings with a non-zero balance.")
+        raise ValueError(
+            "No mutual fund holdings found in this statement. "
+            "Equities, bonds, and NPS are ignored on a fund upload — use Stock Portfolio for shares."
+        )
     rows = [{k: _clean_text(v) for k, v in row.items()} for row in rows]
     return pd.DataFrame(rows, columns=COLUMNS)
 
@@ -308,9 +319,18 @@ def parse_cas(source, password: str, sort_transactions: bool = True):
     open file-like object -- never a stored MFCentral session."""
     if isinstance(source, (bytes, bytearray)):
         source = io.BytesIO(source)
-    return casparser.read_cas_pdf(
-        source, password, output="dict", sort_transactions=sort_transactions
-    )
+    try:
+        return casparser.read_cas_pdf(
+            source, password or "", output="dict", sort_transactions=sort_transactions
+        )
+    except Exception as exc:
+        name = type(exc).__name__
+        message = str(exc).lower()
+        if name == "IncorrectPasswordError" or "password" in message:
+            raise ValueError(
+                "Wrong or missing CAS password. For CAMS, NSDL, and CDSL this is usually your PAN."
+            ) from exc
+        raise
 
 
 def analyze_cas(source, password: str, filename: str = "CAS statement.pdf",
@@ -342,6 +362,7 @@ def analyze_cas(source, password: str, filename: str = "CAS statement.pdf",
         "period_to": _attr(period, "to"),
         "folios": len(folios) if folios is not None else len(accounts or []),
         "parse_warnings": _attr(cas_data, "parse_warnings") or [],
+        "asset_class": "mutual_funds",
     }
     if cas_data.parse_warnings:
         report.setdefault("assumptions", []).append(

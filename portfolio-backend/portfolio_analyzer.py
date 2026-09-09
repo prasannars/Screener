@@ -22,8 +22,8 @@ ALIASES = {
     "sip": ("sip", "sip amount", "monthly sip", "sip amt"),
     "date": ("date", "purchase date", "txn date", "investment date", "trans date", "nav date"),
     "units": ("units", "unit", "qty", "quantity", "no of units", "units held"),
-    "nav": ("nav", "purchase nav", "avg nav", "average nav", "buy nav"),
     "current_nav": ("current nav", "latest nav", "ltp", "present nav"),
+    "nav": ("purchase nav", "avg nav", "average nav", "buy nav", "cost nav"),
     "value": ("current value", "market value", "present value", "current amt", "value", "aum"),
     "invested": ("invested", "invested amount", "cost", "amount invested", "purchase value", "investment", "amount"),
     "gain": ("gain", "pnl", "p/l", "profit", "absolute gain", "unrealised"),
@@ -48,7 +48,9 @@ def _map_columns(headers: list[str]) -> dict[str, str]:
             key = _norm_header(header)
             if header in used or not key:
                 continue
-            if key in aliases or any(alias == key or alias in key for alias in aliases):
+            exact = key in aliases
+            fuzzy = any(len(alias) >= 5 and (alias == key or alias in key) for alias in aliases)
+            if exact or fuzzy:
                 mapped[field] = header
                 used.add(header)
                 break
@@ -168,9 +170,12 @@ def _row_from_series(series: pd.Series, mapping: dict[str, str]) -> dict | None:
     for key in NUM_KEYS:
         row[key] = _to_number(get(key)) if key in mapping else None
     if row["invested"] is None and row["units"] and row["nav"]:
+        # Purchase/avg NAV only — never current NAV, or returns collapse to 0.
         row["invested"] = round(row["units"] * row["nav"], 2)
     if row["value"] is None and row["units"] and row["current_nav"]:
         row["value"] = round(row["units"] * row["current_nav"], 2)
+    elif row["value"] is None and row["units"] and row["nav"] and row["current_nav"] is None:
+        row["value"] = round(row["units"] * row["nav"], 2)
     if row["gain"] is None and row["value"] is not None and row["invested"] is not None:
         row["gain"] = round(row["value"] - row["invested"], 2)
     if row["ret_pct"] is None and row["invested"] and row["gain"] is not None:
@@ -565,18 +570,24 @@ def analyze_workbook(raw: bytes, filename: str, catalog: list[dict] | None = Non
         if slot["value"] and slot["invested"]:
             slot["gain"] = round(slot["value"] - slot["invested"], 2)
             slot["ret_pct"] = round(slot["gain"] / slot["invested"] * 100, 2) if slot["invested"] else None
+        elif slot["value"] and not slot["invested"]:
+            slot["gain"] = None
+            slot["ret_pct"] = None
+            assumptions.append(
+                f"No purchase cost for {slot['name']} in the statement, so return is blank for that scheme."
+            )
         slot["sip"] = round(slot["sip"], 2) if slot["sip"] else None
         slot["units"] = round(slot["units"], 4) if slot["units"] else None
         slot["invested"] = _inr(slot["invested"]) or 0
         slot["value"] = _inr(slot["value"]) or 0
-        slot["gain"] = _inr(slot["gain"]) or 0
+        slot["gain"] = _inr(slot["gain"]) if slot.get("gain") is not None else None
         slot["first_date"] = min(slot["dates"]).isoformat() if slot["dates"] else None
         holdings.append(slot)
 
     holdings.sort(key=lambda r: r["value"] or r["invested"], reverse=True)
     invested = sum(h["invested"] or 0 for h in holdings)
     value = sum(h["value"] or 0 for h in holdings)
-    gain = value - invested if value or invested else None
+    gain = round(value - invested, 2) if invested else None
     ret_pct = round(gain / invested * 100, 2) if invested and gain is not None else None
 
     today = date.today()

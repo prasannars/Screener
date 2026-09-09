@@ -5,6 +5,7 @@ calculates returns, and generates recommendations.
 """
 from __future__ import annotations
 
+import io
 import re
 from datetime import date, datetime
 from typing import List, Dict, Optional
@@ -14,12 +15,54 @@ import yfinance as yf
 from stock_metrics import calculate_stock_score, get_fundamentals
 from screener import screen_stocks
 
-def parse_stock_holdings_from_excel(raw: bytes, filename: str) -> List[Dict]:
+_MF_NAME_RE = re.compile(
+    r"\b(mutual fund|growth option|direct plan|regular plan|elss|"
+    r"index fund|flexi cap|liquid fund|overnight fund|gilt fund|"
+    r"debt fund|hybrid fund|mid cap fund|large cap fund|small cap fund)\b",
+    re.I,
+)
+
+
+def looks_like_mutual_fund(holding: dict) -> bool:
+    blob = f"{holding.get('symbol') or ''} {holding.get('name') or ''}"
+    if _MF_NAME_RE.search(blob):
+        return True
+    token = str(holding.get("symbol") or "").upper().replace(" ", "")
+    return token.startswith("INF") and len(token) >= 12
+
+
+def decrypt_office_bytes(raw: bytes, password: str = "") -> bytes:
+    """Unlock a password-protected Excel file. CSV and unlocked workbooks pass through."""
+    try:
+        import msoffcrypto
+    except ImportError:
+        return raw
+    try:
+        office = msoffcrypto.OfficeFile(io.BytesIO(raw))
+    except Exception:
+        return raw
+    if not office.is_encrypted():
+        return raw
+    if not (password or "").strip():
+        raise ValueError(
+            "This Excel file is password-protected. Enter the file password and upload again."
+        )
+    unlocked = io.BytesIO()
+    try:
+        office.load_key(password=password.strip())
+        office.decrypt(unlocked)
+    except Exception as exc:
+        raise ValueError("Incorrect Excel password. Check the password and try again.") from exc
+    return unlocked.getvalue()
+
+
+def parse_stock_holdings_from_excel(raw: bytes, filename: str, password: str = "") -> List[Dict]:
     """
     Parse stock holdings from Excel/CSV.
     Expected columns: Symbol/Stock, Quantity, Buy Price, Buy Date, Current Price (optional)
     """
     try:
+        raw = decrypt_office_bytes(raw, password)
         if filename.lower().endswith('.csv'):
             df = pd.read_csv(pd.io.common.BytesIO(raw))
         else:
@@ -31,13 +74,21 @@ def parse_stock_holdings_from_excel(raw: bytes, filename: str) -> List[Dict]:
         col_map = {}
         for col in df.columns:
             col_lower = str(col).lower().strip()
-            if any(x in col_lower for x in ['symbol', 'stock', 'ticker', 'name']):
+            if 'scheme' in col_lower:
+                continue
+            if any(x in col_lower for x in ['symbol', 'ticker']):
                 col_map['symbol'] = col
-            elif any(x in col_lower for x in ['quantity', 'qty', 'shares', 'units']):
+            elif 'stock' in col_lower and 'symbol' not in col_map:
+                col_map['symbol'] = col
+            elif col_lower in ('name', 'scrip', 'scrip name', 'company') and 'symbol' not in col_map:
+                col_map['symbol'] = col
+            elif any(x in col_lower for x in ['quantity', 'qty', 'shares']) and 'units' not in col_lower:
                 col_map['quantity'] = col
-            elif any(x in col_lower for x in ['buy price', 'purchase price', 'avg price', 'cost']):
+            elif col_lower == 'units' and 'quantity' not in col_map:
+                col_map['quantity'] = col
+            elif any(x in col_lower for x in ['buy price', 'purchase price', 'avg price', 'avg. price', 'cost price']):
                 col_map['buy_price'] = col
-            elif any(x in col_lower for x in ['buy date', 'purchase date', 'date']):
+            elif any(x in col_lower for x in ['buy date', 'purchase date']) or col_lower == 'date':
                 col_map['buy_date'] = col
             elif any(x in col_lower for x in ['current price', 'ltp', 'cmp', 'market price']):
                 col_map['current_price'] = col
@@ -88,7 +139,9 @@ def parse_stock_holdings_from_excel(raw: bytes, filename: str) -> List[Dict]:
                 continue
         
         return holdings
-    except Exception as e:
+    except ValueError:
+        raise
+    except Exception:
         return []
 
 def fetch_stock_fundamentals(symbols: List[str]) -> Dict[str, Dict]:
@@ -325,58 +378,55 @@ def generate_stock_recommendations(holdings: List[Dict], fundamentals: Dict[str,
     
     return recommendations
 
-def analyze_stock_portfolio(raw: bytes, filename: str) -> Dict:
+def analyze_parsed_holdings(holdings: list) -> Dict:
+    """Score a list of equity holdings that were already parsed."""
+    holdings = [h for h in holdings if h.get("symbol") and not looks_like_mutual_fund(h)]
+    if not holdings:
+        return {
+            "error": "No stock holdings found. Mutual fund schemes in this file were ignored."
+        }
+
+    symbols = [h["symbol"] for h in holdings]
+    fundamentals = fetch_stock_fundamentals(symbols)
+    holdings = calculate_stock_returns(holdings, fundamentals)
+    holdings = score_stocks(holdings, fundamentals)
+    recommendations = generate_stock_recommendations(holdings, fundamentals)
+
+    total_invested = sum(h.get("invested", 0) for h in holdings)
+    total_value = sum(h.get("current_value", 0) for h in holdings)
+    total_gain = total_value - total_invested
+    overall_return = round((total_gain / total_invested * 100), 2) if total_invested > 0 else 0
+
+    harvest_candidates = []
+    for h in holdings:
+        if h.get("gain", 0) < 0:
+            harvest_candidates.append({
+                "symbol": h["symbol"],
+                "loss": abs(h["gain"]),
+                "tax_type": h.get("tax_type", "Unknown"),
+                "holding_years": h.get("holding_years", 0),
+                "action": f"Book loss of ₹{abs(h['gain']):,.0f} to set off against gains",
+            })
+    harvest_candidates.sort(key=lambda x: x["loss"], reverse=True)
+
+    return {
+        "summary": {
+            "total_stocks": len(holdings),
+            "total_invested": round(total_invested, 2),
+            "total_value": round(total_value, 2),
+            "total_gain": round(total_gain, 2),
+            "overall_return_pct": overall_return,
+        },
+        "holdings": holdings,
+        "recommendations": recommendations,
+        "tax_harvest": harvest_candidates,
+    }
+
+
+def analyze_stock_portfolio(raw: bytes, filename: str, password: str = "") -> Dict:
     """
     Main entry point: Parse stock holdings, fetch fundamentals, calculate returns,
     score stocks, and generate recommendations.
     """
-    # 1. Parse holdings
-    holdings = parse_stock_holdings_from_excel(raw, filename)
-    if not holdings:
-        return {'error': 'No valid stock holdings found in file'}
-    
-    # 2. Fetch fundamentals
-    symbols = [h['symbol'] for h in holdings]
-    fundamentals = fetch_stock_fundamentals(symbols)
-    
-    # 3. Calculate returns
-    holdings = calculate_stock_returns(holdings, fundamentals)
-    
-    # 4. Score stocks
-    holdings = score_stocks(holdings, fundamentals)
-    
-    # 5. Generate recommendations
-    recommendations = generate_stock_recommendations(holdings, fundamentals)
-    
-    # 6. Calculate portfolio summary
-    total_invested = sum(h.get('invested', 0) for h in holdings)
-    total_value = sum(h.get('current_value', 0) for h in holdings)
-    total_gain = total_value - total_invested
-    overall_return = round((total_gain / total_invested * 100), 2) if total_invested > 0 else 0
-    
-    # 7. Tax loss harvesting for stocks
-    harvest_candidates = []
-    for h in holdings:
-        if h.get('gain', 0) < 0:
-            harvest_candidates.append({
-                'symbol': h['symbol'],
-                'loss': abs(h['gain']),
-                'tax_type': h.get('tax_type', 'Unknown'),
-                'holding_years': h.get('holding_years', 0),
-                'action': f"Book loss of ₹{abs(h['gain']):,.0f} to set off against gains"
-            })
-    
-    harvest_candidates.sort(key=lambda x: x['loss'], reverse=True)
-    
-    return {
-        'summary': {
-            'total_stocks': len(holdings),
-            'total_invested': round(total_invested, 2),
-            'total_value': round(total_value, 2),
-            'total_gain': round(total_gain, 2),
-            'overall_return_pct': overall_return
-        },
-        'holdings': holdings,
-        'recommendations': recommendations,
-        'tax_harvest': harvest_candidates
-    }
+    holdings = parse_stock_holdings_from_excel(raw, filename, password=password)
+    return analyze_parsed_holdings(holdings)

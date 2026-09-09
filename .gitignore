@@ -13,3 +13,6 @@ portfolio-frontend/dist/
 
 # Generated market data caches
 portfolio-backend/data/
+
+# Local uploaded holdings (SQLite)
+data/

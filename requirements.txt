@@ -5,3 +5,5 @@ pandas
 vectorbt
 ollama
 sse-starlette
+msoffcrypto-tool
+casparser

@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import { Activity, Search } from 'lucide-react';
 import { cn, LoadMore, EmptyState } from './ui';
 
-const API = 'http://localhost:8000';
+import { cn, LoadMore, EmptyState } from './ui';
+import { API } from '../api';
 
 export default function LiveMarketTab({ active = true }) {
   const [rows, setRows] = useState([]);
